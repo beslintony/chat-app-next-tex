@@ -1,39 +1,54 @@
-import { UpstashRedisAdapter } from "@next-auth/upstash-redis-adapter";
 import { NextAuthOptions } from "next-auth";
+import { UpstashRedisAdapter } from "@next-auth/upstash-redis-adapter";
 import { redis } from "./db";
 import GoogleProvider from "next-auth/providers/google";
+import { fetchRedis } from "@/helpers/redis";
 
 function getGoogleCredentials() {
-  const googleClientId = process.env.GOOGLE_CLIENT_ID;
-  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!googleClientId || !googleClientSecret) {
-    throw new Error("Missing Google credentials");
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || clientId.length === 0) {
+    throw new Error("Missing GOOGLE_CLIENT_ID");
   }
-  return {
-    clientId: googleClientId,
-    clientSecret: googleClientSecret,
-  };
+
+  if (!clientSecret || clientSecret.length === 0) {
+    throw new Error("Missing GOOGLE_CLIENT_SECRET");
+  }
+
+  return { clientId, clientSecret };
 }
 
 export const authOptions: NextAuthOptions = {
   adapter: UpstashRedisAdapter(redis),
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-    updateAge: 24 * 60 * 60, // 24 hours
   },
+
   pages: {
-    signIn: "/auth/signin",
+    signIn: "/login",
   },
-  providers: [GoogleProvider(getGoogleCredentials())],
+  providers: [
+    GoogleProvider({
+      clientId: getGoogleCredentials().clientId,
+      clientSecret: getGoogleCredentials().clientSecret,
+    }),
+  ],
   callbacks: {
     async jwt({ token, user }) {
-      const dbUser = (await redis.get(`user:${token.id}`)) as User | null;
+      const dbUserResult = (await fetchRedis("get", `user:${token.id}`)) as
+        | string
+        | null;
 
-      if (!dbUser) {
-        token.id = user!.id;
+      if (!dbUserResult) {
+        if (user) {
+          token.id = user!.id;
+        }
+
         return token;
       }
+
+      const dbUser = JSON.parse(dbUserResult) as User;
 
       return {
         id: dbUser.id,
@@ -49,6 +64,7 @@ export const authOptions: NextAuthOptions = {
         session.user.email = token.email;
         session.user.image = token.picture;
       }
+
       return session;
     },
     redirect() {
